@@ -1,5 +1,7 @@
 # ITAI 3378 - Finance and Business
 from syllabus
+Houston City College
+Spring 2026
 
 ## Course Overview
 The transformation in Finance and Business is a direct result of AI.
