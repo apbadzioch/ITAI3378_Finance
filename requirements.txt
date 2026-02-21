@@ -1,0 +1,12 @@
+gradio
+streamlit
+langchain
+langchain-core
+langchain-community
+langchain-text-splitters
+langchain-huggingface
+langchain-classic
+langchain-ollama
+
+bs4
+
