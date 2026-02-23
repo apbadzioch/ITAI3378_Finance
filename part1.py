@@ -6,7 +6,7 @@ from langchain_classic.chains.retrieval_qa.base import RetrievalQA
 from langchain_ollama import OllamaLLM
 
 import os
-import bs4
+# import bs4
 
 # ----------------------------------------------------
 # 1. Loading PDFs using PyPDFLoader
@@ -21,8 +21,7 @@ for pdf in pdf_files:
 # Loading web pages using WebBaseLoader
 # pages = []
 # web_pages = WebBaseLoader(
-#    ["https://www.sec.gov/search-filings", "https://www.edgar-online.com/"]
-#)
+#    ["https://www.sec.gov/search-filings", "https://www.edgar-online.com/"])
 
 # 2. Split text into chunks
 text_splitter = RecursiveCharacterTextSplitter(
@@ -67,7 +66,7 @@ qa_chain = RetrievalQA.from_chain_type(
 
 while True:
     queries = input("How may I help you?").strip()
-    if queries == {"quit", "exit"}:
+    if queries.lower() == {"quit", "exit"}:
         break
 
     result = qa_chain.invoke({"query": queries})
