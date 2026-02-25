@@ -9,4 +9,5 @@ langchain-classic
 langchain-ollama
 
 bs4
-
+plotly
+pandas
