@@ -55,7 +55,7 @@ with gr.Blocks(
             gr.Markdown("### Add a new company to the index")
             gr.Markdown(
                 "Find a company's CIK number at "
-                "[SEC EDGAR](https://www.sec.gov/cgi-bin/browse-edgar). "
+                "[SEC EDGAR](https://www.sec.gov/search-filings). "
                 "Once added, you can ask questions about it in the Chat tab."
             )
 

@@ -15,7 +15,7 @@ import os
 # ----------------------------------------------------------------------------------
 # Split text into chunks
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
+    chunk_size=750,
     chunk_overlap=150
 )
 
@@ -216,6 +216,8 @@ docs = []
 pdf_files = [
     ("online_project/data/Visa_10K_2025.pdf", "Visa"),
     ("online_project/data/DigitalOcean_10K_2025.pdf", "DigitalOcean"),
+    ("online_project/data/Apple_10K_2025.pdf", "Apple"),
+    ("online_project/data/Amazon_10K_2025.pdf", "Amazon"),
 ]
 for pdf_path, company_name in pdf_files:
     if not os.path.exists(pdf_path):
