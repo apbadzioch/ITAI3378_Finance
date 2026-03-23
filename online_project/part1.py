@@ -54,7 +54,7 @@ for future reference.
 # ----------------------------------------------------------------------------------
 # SEC EDGAR FUNCTIONS
 # CIK (Central Index Key): a unique ID assigned to every company that file with the SEC.
-SEC_HEADERS = {"User-Agent": "MyApp w1166504@student.hccs.edu"}
+SEC_HEADERS = {"User-Agent": "MyApp"}
 
 def search_cik(company_name: str) -> tuple[str, str] | None:
     """
@@ -212,12 +212,21 @@ for name, cik in DEFAULT_COMPANIES:
 # -------------------------------------------------------------------
 # UPDATED : switch back to reading PDFs for SEC security reasons.
 # LOAD PDFs
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 docs = []
+"""
 pdf_files = [
     ("online_project/data/Visa_10K_2025.pdf", "Visa"),
     ("online_project/data/DigitalOcean_10K_2025.pdf", "DigitalOcean"),
     ("online_project/data/Apple_10K_2025.pdf", "Apple"),
     ("online_project/data/Amazon_10K_2025.pdf", "Amazon"),
+]
+"""
+pdf_files = [
+    (os.path.join(BASE_DIR, "data", "Visa_10K_2025.pdf"), "Visa"),
+    (os.path.join(BASE_DIR, "data", "DigitalOcean_10K_2025.pdf"), "DigitalOcean"),
+    (os.path.join(BASE_DIR, "data", "Apple_10K_2025.pdf"), "Apple"),
+    (os.path.join(BASE_DIR, "data", "Amazon_10K_2025.pdf"), "Amazon"),
 ]
 for pdf_path, company_name in pdf_files:
     if not os.path.exists(pdf_path):
@@ -232,7 +241,7 @@ for pdf_path, company_name in pdf_files:
     print(f"Loaded {len(pages)} pages for {company_name}.")
 
 # BUILD OR LOAD FAISS INDEX
-INDEX_PATH = "online_project/faiss_index"
+INDEX_PATH = os.path.join(BASE_DIR, "faiss_index")
 
 if os.path.exists(INDEX_PATH):
     print("Loading existing index from disk...")
