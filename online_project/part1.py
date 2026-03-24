@@ -214,31 +214,12 @@ for name, cik in DEFAULT_COMPANIES:
 # LOAD PDFs
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 docs = []
-"""
-pdf_files = [
-    ("online_project/data/Visa_10K_2025.pdf", "Visa"),
-    ("online_project/data/DigitalOcean_10K_2025.pdf", "DigitalOcean"),
-    ("online_project/data/Apple_10K_2025.pdf", "Apple"),
-    ("online_project/data/Amazon_10K_2025.pdf", "Amazon"),
-]
-"""
 pdf_files = [
     (os.path.join(BASE_DIR, "data", "Visa_10K_2025.pdf"), "Visa"),
     (os.path.join(BASE_DIR, "data", "DigitalOcean_10K_2025.pdf"), "DigitalOcean"),
     (os.path.join(BASE_DIR, "data", "Apple_10K_2025.pdf"), "Apple"),
     (os.path.join(BASE_DIR, "data", "Amazon_10K_2025.pdf"), "Amazon"),
 ]
-for pdf_path, company_name in pdf_files:
-    if not os.path.exists(pdf_path):
-        print(f"Warning: {pdf_path} not found, skipping.")
-        continue
-    print(f"Loading {company_name} from {pdf_path}...")
-    loader = PyPDFLoader(pdf_path)
-    pages = loader.load()
-    for doc in pages:
-        doc.metadata["company"] = company_name
-    docs.extend(pages)
-    print(f"Loaded {len(pages)} pages for {company_name}.")
 
 # BUILD OR LOAD FAISS INDEX
 INDEX_PATH = os.path.join(BASE_DIR, "faiss_index")
@@ -251,6 +232,18 @@ if os.path.exists(INDEX_PATH):
         allow_dangerous_deserialization=True
     )
 else:
+    for pdf_path, company_name in pdf_files:
+        if not os.path.exists(pdf_path):
+            print(f"Warning: {pdf_path} not found, skipping.")
+            continue
+        print(f"Loading {company_name} from {pdf_path}...")
+        loader = PyPDFLoader(pdf_path)
+        pages = loader.load()
+        for doc in pages:
+            doc.metadata["company"] = company_name
+        docs.extend(pages)
+        print(f"Loaded {len(pages)} pages for {company_name}.")
+
     print("Building index from PDFs...")
     splits = text_splitter.split_documents(docs)
     print(f"Total chunks: {len(splits)}")

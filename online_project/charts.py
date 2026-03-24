@@ -56,6 +56,6 @@ def build_sankey(company_name: str, data: dict) -> go.Figure:
     fig.update_layout(
         title_text=f"{company_name} -- Revenue Breakdown",
         font_size=13,
-        height=500
+        height=500,
     )
     return fig

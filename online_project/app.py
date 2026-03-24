@@ -14,6 +14,7 @@ footer {display: none !important}
     font-size: 0.85em;;
 }
 """
+chat = gr.Chatbot(show_label=False)
 
 # -------------------------------------------------------------------
 # CHAT FUNCTION
@@ -76,12 +77,14 @@ with gr.Blocks(
         # Tab 1: Chat
         with gr.Tab("Chat"):
             gr.ChatInterface(
+                chatbot=chat,
+                title="AI Financial Chatbot",
                 fn=respond,
                 examples=[
-                    "What was Visa's total revenue?",
-                    "What are DigitalOcean's main risk factors?",
-                    "Compare Visa and DigitalOcean's net income.",
-                    "What does visa say about competition in their 10-K?"
+                    "e.g. What was Visa's total revenue?",
+                    "e.g. What are DigitalOcean's main risk factors?",
+                    "e.g. Compare Visa and DigitalOcean's net income.",
+                    "e.g. What does visa say about competition in their 10-K?"
                 ],
             )
         # Tab 2: Currently Indexed
@@ -133,7 +136,9 @@ with gr.Blocks(
                 label="Select Company",
                 value="Company"
             )
-            sankey_plot = gr.Plot()
+            sankey_plot = gr.Plot(
+                show_label=False
+            )
             generate_btn = gr.Button("Generate Sankey", variant="primary")
             generate_btn.click(
                 fn=generate_sankey,
