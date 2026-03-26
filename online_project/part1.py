@@ -8,9 +8,10 @@ from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
 
 import os
-# import requests
-# import json
-# import bs4
+import requests
+import json
+import re
+from datetime import datetime
 
 # ----------------------------------------------------------------------------------
 # Split text into chunks
@@ -48,181 +49,185 @@ prompt_template = PromptTemplate(
     """
 )
 
-'''
-When using the webscraper, the SEC redirected to their security page. This code was kept
-for future reference.
-# ----------------------------------------------------------------------------------
-# SEC EDGAR FUNCTIONS
-# CIK (Central Index Key): a unique ID assigned to every company that file with the SEC.
-SEC_HEADERS = {"User-Agent": "MyApp"}
-
-def search_cik(company_name: str) -> tuple[str, str] | None:
-    """
-    Search SEC EDGAR for a company by name and returns (official_name, CIK).
-    Returns None if not found.
-    """
-    url = f"https://efts.sec.gov/LATEST/search-index?q=%22{company_name}%22&forms=10-K"
-    try:
-        response = requests.get(url, headers=SEC_HEADERS, timeout=10)
-        data = response.json()
-        hits = data.get("hits", {}).get("hits", [])
-        if hits:
-            source = hits[0]["_source"]
-            return source.get("entity_name", company_name), source.get("file_num", "")
-    except Exception as e:
-        print(f"CIK search error: {e}")
-        return None
-
-def get_10k_url(cik: str) -> str | None:
-    """
-    Given a CIK number, find the most recent 10-K filing URL from SEC EDGAR.
-    """
-    # zero-pad CIK to 10 digits as required by sec API
-    cik_padded = str(cik).zfill(10)
-    url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
-
-    try:
-        response = requests.get(url, headers=SEC_HEADERS, timeout=10)
-        data = response.json()
-        filings = data["filings"]["recent"]
-
-        for i, form in enumerate(filings["form"]):
-            if form == "10-K":
-                accession = filings["accessionNumber"][i].replace("-", "")
-                doc_name = filings["primaryDocument"][i]
-                cik_raw = str(cik).strip("0")
-                filing_url = (
-                    f"https://www.sec.gov/Archives/edgar/data/"
-                    f"{cik_raw}/{accession}/{doc_name}"
-                )
-                return filing_url
-
-    except Exception as e:
-        print(f"Error fetching 10-K URL for CIK {cik}: {e}")
-
-    return None
-
-def load_company_from_sec(company_name: str, cik: str) -> list:
-    """
-    Fetch a company's most recent 10-K from SEC and return tagged document chunks.
-    """
-    print(f"Fetching 10-K for {company_name} (CIK: {cik})...")
-    filing_url = get_10k_url(cik)
-
-    if not filing_url:
-        print(f"Could not find 10-K URL for {company_name}")
-        return []
-    print(f"Loading from: {filing_url}")
-
-    try:
-        loader = WebBaseLoader(
-            web_paths=[filing_url],
-            bs_kwargs={
-                "parse_only": bs4.SoupStrainer(["p", "td", "th", "h1", "h2", "h3"])
-            },
-            requests_kwargs={"headers": SEC_HEADERS}
-        )
-        pages = loader.load()
-
-        # tag every page with company metadata
-        for doc in pages:
-            doc.metadata["company"] = company_name
-            doc.metadata["cik"] = cik
-            doc.metadata["source_url"] = filing_url
-
-        return pages
-
-    except Exception as e:
-        print(f"Error loading {company_name} filings: {e}")
-        return []
-
-# -------------------------------------------------------------
-# INDEXING MANAGEMENT
-INDEX_PATH = "online_project/faiss_index"
-INDEXED_COMPANIES_PATH = "online_project/indexed_companies.json"
-
-def load_indexed_companies() -> set:
-    """Load the set of already-indexed company names from disk."""
-    if os.path.exists(INDEXED_COMPANIES_PATH):
-        with open(INDEXED_COMPANIES_PATH, "r") as f:
-            return set(json.load(f))
-    return set()
-
-def save_indexed_companies(companies: set):
-    """Persist the set of indexed company names to disk."""
-    os.makedirs(os.path.dirname(INDEXED_COMPANIES_PATH), exist_ok=True)
-    with open(INDEXED_COMPANIES_PATH, "w") as f:
-        json.dump(list(companies), f)
-
-def ensure_company_indexed(company_name: str, cik: str):
-    """
-    Check if company is already in the vector store.
-    If not, fetch from SEC, split, embed, and add to the index.
-    """
-    global vector_store, indexed_companies
-
-    if company_name in indexed_companies:
-        print(f"{company_name} already indexed. Skipping.")
-        return
-
-    docs = load_company_from_sec(company_name, cik)
-    if not docs:
-        print(f"No documents loaded for {company_name}.")
-        return
-
-    splits = text_splitter.split_documents(docs)
-    print(f"Adding {len(splits)} chunks for {company_name} to index...")
-
-    if vector_store is None:
-        vector_store = FAISS.from_documents(splits, embeddings)
-    else:
-        vector_store.add_documents(splits)
-
-    indexed_companies.add(company_name)
-    vector_store.save_local(INDEX_PATH)
-    save_indexed_companies(indexed_companies)
-    print(f"{company_name} indexed successfully.")
-
-# -------------------------------------------------------------
-# VECTOR STORE INITIALIZATION
-indexed_companies = load_indexed_companies()
-
-if os.path.exists(INDEX_PATH):
-    print("Loading from file...")
-    vector_store = FAISS.load_local(
-        INDEX_PATH,
-        embeddings,
-        allow_dangerous_deserialization=True
-    )
-else:
-    print("No existing index found. Starting fresh.")
-    vector_store = None
-
 # -------------------------------------------------------------------
-# PRE-LOAD DEFAULT COMPANIES - add as needed
-# CIK numbers can be found at https://www.sec.gov/cgi-bin/browse-edgar
-DEFAULT_COMPANIES = [
-    ("Visa", "0001403161"),
-    ("DigitalOcean", "0001560327"),
+# SECTION METADATA FILTERING
+SECTION_MAP = [
+    (r"item\s*1a", "Item 1A", "Risk Factors"),
+    (r"item\s*1b", "Item 1B", "Unresolved Staff Comments"),
+    (r"item\s*1[^a-z0-9]", "Item 1", "Business"),
+    (r"item\s*2[^a-z0-9]", "Item 2", "Properties"),
+    (r"item\s*3[^a-z0-9]", "Item 3", "Legal Proceedings"),
+    (r"item\s*4[^a-z0-9]", "Item 4", "Mine Safety Disclosures"),
+    (r"item\s*5[^a-z0-9]", "Item 5", "Market for Registrant Equity"),
+    (r"item\s*6[^a-z0-9]", "Item 6", "Selected Financial Data"),
+    (r"item\s*7a", "Item 7A", "Quantitative Market Risk"),
+    (r"item\s*7[^a-z0-9]", "Item 7", "MD&A"),
+    (r"item\s*8[^a-z0-9]", "Item 8", "Financial Statements"),
+    (r"item\s*9a", "Item 9A", "Controls and Procedures"),
+    (r"item\s*9b", "Item 9B", "Other Information"),
+    (r"item\s*9[^a-z0-9]", "Item 9", "Disagreements with Accountants"),
+    (r"item\s*10", "Item 10", "Directors and Corporate Governance"),
+    (r"item\s*11", "Item 11", "Executive Compensation"),
+    (r"item\s*12", "Item 12", "Security Ownership"),
+    (r"item\s*13", "Item 13", "Certain Relationships"),
+    (r"item\s*14", "Item 14", "Principal Accountant Fees"),
+    (r"item\s*15", "Item 15", "Exhibits"),
 ]
-for name, cik in DEFAULT_COMPANIES:
-    ensure_company_indexed(name, cik)
-'''
+def detect_section(text: str):
+    """
+    Scan the first 300 chars of a page for a 10-K section heading.
+    Returns (item_id, section_name) or (None, None) if no new section is found
+    """
+    sample = text[:300].lower()
+    for pattern, item_id, name in SECTION_MAP:
+        if re.search(pattern, sample):
+            return item_id, name
+        return None, None
 
 # -------------------------------------------------------------------
-# UPDATED : switch back to reading PDFs for SEC security reasons.
+# METADATA ENRICHMENT
+def enrich_metadata(doc, company: str, fiscal_year: int,
+                    chunk_index: int, total_chunks: int,
+                    section_id: str, section_name: int) -> None:
+    """
+    Mutates doc.metadata with enriched fields.
+    Called on every chunk AFTER splitting.
+    """
+    text = doc.page_content
+
+    doc.metadata_update({
+        # identity
+        "company": company,
+        "fiscal_year": fiscal_year,
+        "filing_type": "10-K",
+
+        # location
+        "section": section_id,
+        "section_name": section_name,
+
+        # chunk position
+        "chunk_index": chunk_index,
+        "total_chunks": total_chunks,
+        "is_first_chunk": chunk_index == 0,
+        "is_last_chunk": chunk_index == total_chunks - 1,
+
+        # content signals
+        "has_numbers": bool(re.search(r'\$[\d,]+|\d+\.?\d*%|\d{4}')),
+        "has_table": text.count('\n') > 10 and '\t' in text,
+        "is_short_chunk": len(text) < 200,
+
+        # financial keyword flags
+
+        # chunk quality
+        "char_count": len(text),
+        "word_count": len(text.split()),
+
+        # provenance
+        "source_file": doc.metadata.get("source", ""),
+        "indexed_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    })
+
+# -------------------------------------------------------------------
+# PDF LOADER WITH SECTION DETECTION
+def load_pdf_with_sections(pdf_path: str, company_name: str, fiscal_year: int):
+    """
+    Load a PDF, detect 10-K sections at page level, split into chunks,
+    then enrich every chunk's metadata.
+    """
+    # 1. Load pages
+    loader = PyPDFLoader(pdf_path)
+    pages = loader.load()
+
+    # 2. detect section per page and tag before splitting
+    current_section_id = "Unknown"
+    current_section_name = "Unknown"
+
+    for doc in pages:
+        detected_id, detected_name = detect_section(doc.page_content)
+        if detected_id:
+            current_section_id = detected_id
+            current_section_name = detected_name
+            # write onto page so splitter inherits it on every child chunk
+            doc.metadata["company"] = company_name
+            doc.metadata["fiscal_year"] = fiscal_year
+            doc.metadata["section"] = current_section_id
+            doc.metadata["section_name"] = current_section_name
+
+        print(f" {len(pages)} pages loaded for {company_name}.")
+
+        # 3. split - chunks inherit page metadata automatically
+        splits = text_splitter.split_documents(pages)
+        total = len(pages)
+        print(f" {total} chunks created for {company_name}.")
+
+        # 4. enrich every chunk
+        for i, chunk in enumerate(splits):
+            enrich_metadata(
+                chunk,
+                company = company_name,
+                fiscal_year = fiscal_year,
+                chunk_index = i,
+                total_chunks = chunk.metadata["section"],
+                section_name = chunk.metadata["section_name"],
+            )
+        return splits
+
+# -------------------------------------------------------------------
+# JSON METADATA SUMMARY (one file per company, used by UI / charts tab
+def save_company_metadata_json(splits: list, company_name: str, output_dir: str) -> None:
+    """
+    Write a structured HSON summary of sections + stats for a company.
+    """
+    sections: dict = {}
+    for chunk in splits:
+        s = chunk.metadata.get("section", "Unknown")
+        sname = chunk.metadata.get("section_name", "Unknown")
+        page = chunk.metadata.get("page", 0)
+        if s not in sections:
+            sections[s] = {
+                "section_id": s,
+                "section_name": sname,
+                "page_start": page,
+                "page_end": page,
+                "chunk_count": 0,
+            }
+        else:
+            sections[s]["page_end"] = max(sections[s]["page_end"], page)
+        sections[s]["chunk_count"] += 1
+
+    output = {
+        "company": company_name,
+        "fiscal_year": splits[0].metadata.get("fiscal_year") if splits else None,
+        "filing_type": "10_k",
+        "total_pages": max(c.metadata.get("pages", 0) for c in splits),
+        "total_chunks": len(splits),
+        "indexed_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sections": list(sections.values()),
+    }
+
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, f"{company_name}_metadata.json")
+    with open(path, "w") as f:
+        json.dump(output, f, indent=2)
+    print(f" Metadata JSON saved: {path}")
+
+
+# When using the webscraper, the SEC redirected to their security page.
+# -------------------------------------------------------------------
+# UPDATED : switch back to reading PDFs for sec.gov security reasons.
 # LOAD PDFs
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 docs = []
 pdf_files = [
-    (os.path.join(BASE_DIR, "data", "Visa_10K_2025.pdf"), "Visa"),
-    (os.path.join(BASE_DIR, "data", "DigitalOcean_10K_2025.pdf"), "DigitalOcean"),
-    (os.path.join(BASE_DIR, "data", "Apple_10K_2025.pdf"), "Apple"),
-    (os.path.join(BASE_DIR, "data", "Amazon_10K_2025.pdf"), "Amazon"),
+    (os.path.join(BASE_DIR, "data", "Visa_10K_2025.pdf"), "Visa", 2025),
+    (os.path.join(BASE_DIR, "data", "DigitalOcean_10K_2025.pdf"), "DigitalOcean", 2025),
+    (os.path.join(BASE_DIR, "data", "Apple_10K_2025.pdf"), "Apple", 2025),
+    (os.path.join(BASE_DIR, "data", "Amazon_10K_2025.pdf"), "Amazon", 2025),
 ]
 
 # BUILD OR LOAD FAISS INDEX
 INDEX_PATH = os.path.join(BASE_DIR, "faiss_index")
+METADATA_DIR = os.path.join(BASE_DIR, "metadata")
 
 if os.path.exists(INDEX_PATH):
     print("Loading existing index from disk...")
@@ -232,25 +237,22 @@ if os.path.exists(INDEX_PATH):
         allow_dangerous_deserialization=True
     )
 else:
-    for pdf_path, company_name in pdf_files:
+    all_splits = {}
+    for pdf_path, company_name, fiscal_year in pdf_files:
         if not os.path.exists(pdf_path):
             print(f"Warning: {pdf_path} not found, skipping.")
             continue
-        print(f"Loading {company_name} from {pdf_path}...")
-        loader = PyPDFLoader(pdf_path)
-        pages = loader.load()
-        for doc in pages:
-            doc.metadata["company"] = company_name
-        docs.extend(pages)
-        print(f"Loaded {len(pages)} pages for {company_name}.")
 
-    print("Building index from PDFs...")
-    splits = text_splitter.split_documents(docs)
-    print(f"Total chunks: {len(splits)}")
-    vector_store = FAISS.from_documents(splits, embeddings)
+        print(f"Loading {company_name}...")
+        splits = load_pdf_with_sections(pdf_path, company_name, fiscal_year)
+        save_company_metadata_json(splits, company_name, fiscal_year)
+        all_splits.extend(splits)
+
+    print(f"Building FAISS index from {len(all_splits)} total chunks...")
+    vector_store = FAISS.from_documents(all_splits, embeddings)
     vector_store.save_local(INDEX_PATH)
     print("Index saved.")
-indexed_companies = set(company for _, company in pdf_files)
+indexed_companies = set(company for _, company, _ in pdf_files)
 
 # -------------------------------------------------------------------
 # COMPANY DETECTION FROM QUERY
