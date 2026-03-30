@@ -7,10 +7,7 @@ from langchain_classic.chains.retrieval_qa.base import RetrievalQA
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
 
-import os
-import requests
-import json
-import re
+import os, json, re
 from datetime import datetime
 
 # ----------------------------------------------------------------------------------
@@ -27,7 +24,7 @@ embeddings = HuggingFaceEmbeddings(
 
 # USE OLLAMA LLM FOR LANGCHAIN
 llm = OllamaLLM(
-    model="gemma3:4b",
+    model="gemma3:27b-cloud",
     temperature=0.2
 )
 
@@ -217,7 +214,7 @@ def save_company_metadata_json(splits: list, company_name: str, output_dir: str)
 # UPDATED : switch back to reading PDFs for sec.gov security reasons.
 # LOAD PDFs
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-docs = []
+
 pdf_files = [
     (os.path.join(BASE_DIR, "data", "Visa_10K_2025.pdf"), "Visa", 2025),
     (os.path.join(BASE_DIR, "data", "DigitalOcean_10K_2025.pdf"), "DigitalOcean", 2025),
@@ -315,7 +312,7 @@ def build_filter(query: str, company: str | None) -> dict:
     if any(w in query_lower for w in ["revenue", "income", "profit", "margin", "earnings", "ebitda"]):
         return {**base, "has_numbers": True, "is_short_chunk": False}
     if any(w in query_lower for w in ["outlook", "guidance", "forecast", "expect", "future"]):
-        return {**base, "mentions_guidance": True, "is_short_chunk": False}
+        return {**base, "section": "Item 7", "is_short_chunk": False}
     if any(w in query_lower for w in ["financial statement", "balance sheet", "cash flow"]):
         return {**base, "section": "Item 8", "is_short_chunk": False}
     if any(w in query_lower for w in ["management", "discussion", "analysis", "md&a"]):
