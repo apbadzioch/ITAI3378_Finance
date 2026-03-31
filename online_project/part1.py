@@ -45,6 +45,15 @@ prompt_template = PromptTemplate(
     
     """
 )
+# CUSTOM SANKEY TEMPLATE PROMPT
+sankey_template = PromptTemplate(
+    input_variables=["context", "question"],
+    template="""
+    {question}
+    Filing context: {context}
+    Respond ONLY with the JSON object. No explanation, no markdown fences. 
+    """
+)
 
 # -------------------------------------------------------------------
 # SECTION METADATA FILTERING
@@ -292,7 +301,7 @@ else:
     vector_store = FAISS.from_documents(all_splits, embeddings)
     vector_store.save_local(INDEX_PATH)
     print("Index saved.")
-indexed_companies = set(company for _, company, _ in pdf_files)
+#indexed_companies = set(company for _, company, _ in pdf_files)
 
 # -------------------------------------------------------------------
 # SMART FILTER BUILDER
@@ -378,6 +387,77 @@ def ask(query: str) -> str:
         answer += "\n\n Sources: " + " | ".join(sorted(refs))
     return answer
 
+# ------------------------------------------------------------------
+# SANKEY FUNCTION
+SANKEY_QUERY_TEMPLATE = """
+You are analyzing the 10-K filing for {company}.
+
+Your task: extract a Sankey diagram structure showing how revenue flows through this company.
+
+Rules:
+- The first node MUST be "Revenue" (the root)
+- Use the actual line item names this company uses in their filing
+- Every link value must be in millions USD
+- Numbers must be internally consistent: Revenue = Cost of Revenue + Gross Profit, etc.
+- Include 6-10 nodes total
+- Only use figures explicitly stated in the filing
+Respond ONLY with a JSON object in this exact format:
+{{
+    "nodes" : ["Revenue", "Cost of Revenue", "Gross Profit", ...],
+    "links" : [
+        {{"source": 0, "target": 1, "value": 1234}},
+        {{"source": 0, "target": 2, "value": 5678}},
+        ...
+    ],
+    "node_types": ["income", "cost", "income", "cost", ...]
+}}
+node_types must be "income" or "cost" for each node.    
+"""
+def extract_sankey_structure(company:str) -> dict | None:
+    retriever = vector_store.as_retriever(
+        search_kwargs={
+            "k": 10,
+            "filter": {
+                "company": company,
+                "has_numbers": True,
+                "is_short_chunk": False,
+            }
+        }
+    )
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=retriever,
+        return_source_documents=False,
+        chain_type_kwargs={"prompt": sankey_template}
+    )
+    try:
+        result = qa_chain.invoke({"query": SANKEY_QUERY_TEMPLATE.format(company=company)})
+        raw = result["result"]
+
+        clean = re.sub(r"```(?:json)?|```", "", raw).strip()
+        match = re.search(r"\{.*\}", clean, re.DOTALL)
+        if not match:
+            print(f"[extract_sankey_structure] No JSON found for {company}")
+            return None
+
+        data = json.loads(match.group())
+
+        if not all(k in data for k in ("nodes", "links", "node_types")):
+            print(f"[extract_sankey_structure] Missing keys for {company}")
+            return None
+
+        data["links"] = [
+            {**lnk, "value": float(lnk.get("value") or 0)}
+            for lnk in data["links"]
+            if float(lnk.get("value") or 0) > 0
+        ]
+
+        return data
+
+    except Exception as e:
+        print(f"[extract_sankey_structure] Error for {company}: {e}")
+        return None
 
 # -------------------------------------------------------------------
 # DYNAMIC COMPANY ADDITION (for future use)

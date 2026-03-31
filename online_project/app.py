@@ -1,5 +1,5 @@
 import gradio as gr
-from part1 import ask, indexed_companies # add_company,
+from part1 import ask, indexed_companies, extract_sankey_structure
 from charts import build_sankey
 
 # -------------------------------------------------------------
@@ -35,37 +35,24 @@ def handle_add_company(company_name, cik):
     return f"{result}\n{updated_list}"
 
 # -------------------------------------------------------------------
-# -- example hardcoded data for now (later pulled from RAG)
-SAMPLE_DATA = {
-    "Visa": {
-        "revenue": 100,
-        "cost_of_revenue": 18,
-        "gross_profit": 82,
-        "rd": 8,
-        "sales_marketing": 12,
-        "ga": 9,
-        "operating_income": 53,
-        "taxes": 10,
-        "net_income": 43
-    },
-    "DigitalOcean": {
-        "revenue": 100,
-        "cost_of_revenue": 38,
-        "gross_profit": 62,
-        "rd": 20,
-        "sales_marketing": 18,
-        "ga": 12,
-        "operating_income": 12,
-        "taxes": 3,
-        "net_income": 9
-    }
-}
-
 # SANKEY GRAPH FUNCTION
 def generate_sankey(company_name):
-    if company_name not in SAMPLE_DATA:
+    if not company_name:
         return None
-    return build_sankey(company_name, SAMPLE_DATA[company_name])
+
+    data = extract_sankey_structure(company_name)
+
+    if data is None:
+        import plotly.graph_objects as go
+        fig = go.Figure()
+        fig.add_annotation(
+            text=f"Could not extract financials for {company_name}.<br>Check the filing is indexed.",
+            xref="paper", yref="paper", x=0.5, y=0.5,
+            showarrow=False, font=dict(size=14)
+        )
+        return fig
+
+    return build_sankey(company_name, data)
 
 # -------------------------------------------------------------------
 # UI LAYOUT
@@ -132,9 +119,9 @@ with gr.Blocks(
         with gr.Tab("Charts"):
             gr.Markdown("Revenue Flow Breakdown")
             company_selector = gr.Dropdown(
-                choices=list(SAMPLE_DATA.keys()),
+                choices=sorted(indexed_companies),
                 label="Select Company",
-                value="Company"
+                value=None,
             )
             sankey_plot = gr.Plot(
                 show_label=False
@@ -146,6 +133,7 @@ with gr.Blocks(
                 outputs=sankey_plot
             )
 
-    gr.HTML('<div class="custom-footer">AI-Powered SEC Filing Analysis Engine</div>')
+    gr.HTML('<div class="custom-footer">AI-Powered SEC Filing Analysis Engine.<br/>'
+            'All information is publicly available on company website or sec.gov</div>')
 
 demo.launch(share=True)
