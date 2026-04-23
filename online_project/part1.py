@@ -6,6 +6,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_classic.chains.retrieval_qa.base import RetrievalQA
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
+from langchain.tools import tool
 
 import os, json, re
 from datetime import datetime
@@ -24,7 +25,7 @@ embeddings = HuggingFaceEmbeddings(
 
 # USE OLLAMA LLM FOR LANGCHAIN
 llm = OllamaLLM(
-    model="gemma3:27b-cloud",
+    model="gemma4:31b-cloud",
     temperature=0.2
 )
 
@@ -54,6 +55,33 @@ sankey_template = PromptTemplate(
     Respond ONLY with the JSON object. No explanation, no markdown fences. 
     """
 )
+
+# ------------------------------------------------------------------
+# SANKEY SECTIONS
+SANKEY_QUERY_TEMPLATE = """
+You are analyzing the 10-K filing for {company}.
+
+Your task: extract a Sankey diagram structure showing how revenue flows through this company.
+
+Rules:
+- The first node MUST be "Revenue" (the root)
+- Use the actual line item names this company uses in their filing
+- Every link value must be in millions USD
+- Numbers must be internally consistent: Revenue = Cost of Revenue + Gross Profit, etc.
+- Include 6-10 nodes total
+- Only use figures explicitly stated in the filing
+Respond ONLY with a JSON object in this exact format:
+{{
+    "nodes" : ["Revenue", "Cost of Revenue", "Gross Profit", ...],
+    "links" : [
+        {{"source": 0, "target": 1, "value": 1234}},
+        {{"source": 0, "target": 2, "value": 5678}},
+        ...
+    ],
+    "node_types": ["income", "cost", "income", "cost", ...]
+}}
+node_types must be "income" or "cost" for each node.    
+"""
 
 # -------------------------------------------------------------------
 # SECTION METADATA FILTERING
@@ -254,8 +282,9 @@ def save_indexed_companies(companies: set) -> None:
     with open(INDEXED_COMPANIES_PATH, "w") as f:
         json.dump(list(companies), f, indent=2)
 
-# -------------------------------------------------------------------
+
 indexed_companies= load_indexed_companies()
+
 
 if os.path.exists(INDEX_PATH):
     print("Loading existing index from disk...")
@@ -301,7 +330,6 @@ else:
     vector_store = FAISS.from_documents(all_splits, embeddings)
     vector_store.save_local(INDEX_PATH)
     print("Index saved.")
-#indexed_companies = set(company for _, company, _ in pdf_files)
 
 # -------------------------------------------------------------------
 # SMART FILTER BUILDER
@@ -346,7 +374,11 @@ def detect_company(query: str) -> str | None:
 # MAIN ASK FUNCTION
 def ask(query: str) -> str:
     """
-    Main entry point called by Gradio.
+    Use this tool to answer specific questions about company 10-K filings.
+    It performs a deep search across financial documents to find figures,
+    risk factors, and management discussions.
+    Input should be a clear question (e.g., 'What are the primary risk factors for Apple in 2025?')
+    Main entry point called by gradio.
     Detects company from query, filters retrieval accordingly
     and returns a grounded financial analysis answer.
     """
@@ -387,33 +419,22 @@ def ask(query: str) -> str:
         answer += "\n\n Sources: " + " | ".join(sorted(refs))
     return answer
 
-# ------------------------------------------------------------------
-# SANKEY FUNCTION
-SANKEY_QUERY_TEMPLATE = """
-You are analyzing the 10-K filing for {company}.
+def list_available_companies() -> list:
+    """
+    Returns a list of all companies currently indexed in the financial database.
+    Use this tool first to verify if a company's data is available before
+    calling 'ask' or 'extract_sankey_structure'.
+    """
+    return list(indexed_companies)
 
-Your task: extract a Sankey diagram structure showing how revenue flows through this company.
 
-Rules:
-- The first node MUST be "Revenue" (the root)
-- Use the actual line item names this company uses in their filing
-- Every link value must be in millions USD
-- Numbers must be internally consistent: Revenue = Cost of Revenue + Gross Profit, etc.
-- Include 6-10 nodes total
-- Only use figures explicitly stated in the filing
-Respond ONLY with a JSON object in this exact format:
-{{
-    "nodes" : ["Revenue", "Cost of Revenue", "Gross Profit", ...],
-    "links" : [
-        {{"source": 0, "target": 1, "value": 1234}},
-        {{"source": 0, "target": 2, "value": 5678}},
-        ...
-    ],
-    "node_types": ["income", "cost", "income", "cost", ...]
-}}
-node_types must be "income" or "cost" for each node.    
-"""
 def extract_sankey_structure(company:str) -> dict | None:
+    """
+    Extracts a structured JSON representation of a company's revenue flow
+    to be used for creating a Sankey diagram.
+    Use this when the user asks for a visual breakdown of revenue,
+    income, or cost structures.
+    """
     retriever = vector_store.as_retriever(
         search_kwargs={
             "k": 10,
