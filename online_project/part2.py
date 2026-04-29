@@ -21,10 +21,12 @@ from langchain_ollama import ChatOllama
 from langchain_core.prompts import PromptTemplate
 from langchain.tools import tool
 
-import os, json, re
+import os, json, re, subprocess, tempfile
 from datetime import datetime
 
 from charts import build_sankey
+import plotly.graph_objects as go
+import yfinance as yf
 
 from typing import Annotated, TypedDict
 from langgraph.graph import StateGraph, END
@@ -94,6 +96,22 @@ pdf_files = [
     (os.path.join(BASE_DIR, "data", "NIKE_10K_2025.pdf"), "Nike", 2025),
     (os.path.join(BASE_DIR, "data", "META_10K_2025.pdf"), "META", 2025),
 ]
+
+# TICKER MAP — maps indexed company names to yfinance ticker symbols
+TICKER_MAP = {
+    "Visa": "V",
+    "DigitalOcean": "DOCN",
+    "Apple": "AAPL",
+    "Amazon": "AMZN",
+    "AMD": "AMD",
+    "Crowdstrike": "CRWD",
+    "IBM": "IBM",
+    "Google": "GOOGL",
+    "Intel": "INTC",
+    "Oracle": "ORCL",
+    "Nike": "NKE",
+    "META": "META",
+}
 
 # CUSTOM SANKEY TEMPLATE PROMPT
 sankey_template = PromptTemplate(
@@ -494,11 +512,259 @@ def list_companies() -> list:
 @tool
 def build_chart(company_name: str):
     """Build the sankey diagram for the company."""
-    data = extract_sankey_structure(company_name)
-    if data is None:
-        return "Could not extract Sankey data."
-    fig = build_sankey(company_name)
-    return fig
+    data = extract_sankey_structure({"company": company_name})
+    if not data or "nodes" not in data:
+        return f"Not enough data to build a sankey diagram."
+    payload = {
+        "type": "sankey",
+        "company": company_name,
+        "data": data
+    }
+    return f"DATA_PAYLOAD:{json.dumps(payload)}"
+
+@tool
+def get_stock_info(company: str) -> str:
+    """
+    Retrieves live stock market data for a company using yfinance.
+    Use this when the user asks about stock price, market cap, P/E ratio,
+    52-week high/low, dividend yield, analyst targets, or any current
+    market information for an indexed company.
+    Input should be the company name as it appears in the index
+    (e.g. 'Apple', 'Google', 'AMD').
+    """
+    ticker_symbol = TICKER_MAP.get(company)
+    if not ticker_symbol:
+        for name, sym in TICKER_MAP.items():
+            if name.lower() == company.lower():
+                ticker_symbol = sym
+                break
+
+    if not ticker_symbol:
+        available = ", ".join(TICKER_MAP.keys())
+        return (
+            f"No ticker found for '{company}'. "
+            f"Available companies: {available}"
+        )
+
+    try:
+        tk = yf.Ticker(ticker_symbol)
+        info = tk.info
+
+        def fmt_large(val):
+            if val is None:
+                return "N/A"
+            if val >= 1_000_000_000:
+                return f"${val / 1_000_000_000:.2f}B"
+            if val >= 1_000_000:
+                return f"${val / 1_000_000:.2f}M"
+            return f"${val:,.2f}"
+
+        def fmt_price(val):
+            return f"${val:,.2f}" if val is not None else "N/A"
+
+        def fmt_pct(val):
+            return f"{val * 100:.2f}%" if val is not None else "N/A"
+
+        name        = info.get("longName", company)
+        exchange    = info.get("exchange", "N/A")
+        currency    = info.get("currency", "USD")
+        price       = info.get("currentPrice") or info.get("regularMarketPrice")
+        prev_close  = info.get("previousClose")
+        day_low     = info.get("dayLow")
+        day_high    = info.get("dayHigh")
+        week52_low  = info.get("fiftyTwoWeekLow")
+        week52_high = info.get("fiftyTwoWeekHigh")
+        mkt_cap     = info.get("marketCap")
+        pe_trailing = info.get("trailingPE")
+        pe_forward  = info.get("forwardPE")
+        eps         = info.get("trailingEps")
+        div_yield   = info.get("dividendYield")
+        target_mean = info.get("targetMeanPrice")
+        analyst_rec = info.get("recommendationKey", "N/A").upper()
+        volume      = info.get("volume")
+        avg_volume  = info.get("averageVolume")
+
+        lines = [
+            f"## {name} ({ticker_symbol}) — {exchange}",
+            f"**Current Price:** {fmt_price(price)} {currency}",
+            f"**Previous Close:** {fmt_price(prev_close)}",
+            f"**Day Range:** {fmt_price(day_low)} – {fmt_price(day_high)}",
+            f"**52-Week Range:** {fmt_price(week52_low)} – {fmt_price(week52_high)}",
+            "",
+            f"**Market Cap:** {fmt_large(mkt_cap)}",
+            f"**Trailing P/E:** {f'{pe_trailing:.2f}' if pe_trailing else 'N/A'}",
+            f"**Forward P/E:** {f'{pe_forward:.2f}' if pe_forward else 'N/A'}",
+            f"**EPS (TTM):** {fmt_price(eps)}",
+            f"**Dividend Yield:** {fmt_pct(div_yield)}",
+            "",
+            f"**Volume:** {f'{volume:,}' if volume else 'N/A'}",
+            f"**Avg Volume:** {f'{avg_volume:,}' if avg_volume else 'N/A'}",
+            "",
+            f"**Analyst Consensus:** {analyst_rec}",
+            f"**Mean Price Target:** {fmt_price(target_mean)}",
+        ]
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Error fetching stock data for {company} ({ticker_symbol}): {e}"
+
+@tool
+def get_stock_chart(company: str, period: str = "1y") ->  str:
+    """
+    Retrieves stock history. Returns a DATA_PAYLOAD string for a candlestick chart.
+    """
+    ticker_symbol = TICKER_MAP.get(company)
+    if not ticker_symbol:
+        return f"Ticker not found for {company}"
+
+    try:
+        tk = yf.Ticker(ticker_symbol)
+        hist = tk.history(period=period)
+
+        if hist.empty:
+            return f"No historical data returned for {ticker_symbol}."
+
+        payload = {
+            "type": "stock_chart",
+            "company": company,
+            "ticker": ticker_symbol,
+            "dates": hist.index.strftime("%Y-%m-%d").tolist(),
+            "open": hist["Open"].tolist(),
+            "high":hist["High"].tolist(),
+            "low": hist["Low"].tolist(),
+            "close": hist["Close"].tolist()
+        }
+        return f"DATA_PAYLOAD:{json.dumps(payload)}"
+
+    except Exception as e:
+        return f"Error fetching chart data for {company} ({ticker_symbol}): {e}"
+
+# --- REPORT GENERATION ---
+AUDIENCE_INSTRUCTIONS = {
+    "analyst": (
+        "You are writing for a professional equity analyst. "
+        "Use precise financial terminology, cite specific figures with units, "
+        "reference GAAP line items by name, and maintain a formal, objective tone. "
+        "Assume the reader understands concepts like EBITDA, operating leverage, and segment reporting."
+    ),
+    "investor": (
+        "You are writing for a retail investor with some financial literacy. "
+        "Explain key figures clearly but don't over-simplify. "
+        "Relate numbers to business outcomes (e.g. 'margins expanded because...'). "
+        "Avoid heavy jargon but don't omit important detail."
+    ),
+    "general": (
+        "You are writing for a general audience with no finance background. "
+        "Use plain language. Explain any financial terms you use. "
+        "Focus on the 'so what' — why does this number matter to the company's future? "
+        "Use analogies where helpful. Keep sentences short and accessible."
+    ),
+}
+
+REPORT_SECTION_QUERIES = {
+    "business_overview": "Describe {company}'s core business model, primary products or services, revenue segments, and key markets they operate in.",
+    "financial_highlights": "What were {company}'s key financial results? Include revenue, gross profit, operating income, net income, and year-over-year changes with specific figures.",
+    "mda_summary": "Summarize {company}'s Management Discussion and Analysis. What did management highlight as key drivers of performance, operational changes, and strategic priorities?",
+    "risk_factors": "What are the top 5 material risk factors disclosed by {company}? Focus on the most significant business, market, and operational risks.",
+    "outlook": "What is {company}'s forward-looking guidance and strategic outlook? Include any targets, initiatives, or market opportunities management discussed.",
+}
+
+REPORT_BUILDER_SCRIPT = os.path.join(BASE_DIR, "build_report.js")
+
+@tool
+def generate_report(company: str, audience: str = "investor") -> str:
+    """
+    Generates a professional 5-section 10-K analysis report as a .docx file.
+    Sections covered: Business Overview, Financial Highlights, MD&A Summary,
+    Risk Factors, and Strategic Outlook.
+    'audience' controls the tone and terminology level:
+        - 'analyst'  : professional equity analyst, full financial jargon
+        - 'investor' : retail investor, clear but not dumbed down (default)
+        - 'general'  : plain English, no finance background assumed
+    Returns the file path to the generated .docx for download.
+    Use this when the user asks to generate, write, create, or export a report.
+    """
+    global vector_store
+    if vector_store is None:
+        return "No docs indexed."
+
+    audience = audience.lower()
+    if audience not in AUDIENCE_INSTRUCTIONS:
+        audience = "investor"
+
+    audience_prompt = AUDIENCE_INSTRUCTIONS[audience]
+
+    # --- Query each section from the RAG system ---
+    sections = {}
+    for section_key, query_template in REPORT_SECTION_QUERIES.items():
+        query = query_template.format(company=company)
+        meta_filter = build_filter(query, company)
+
+        retriever = vector_store.as_retriever(
+            search_kwargs={
+                "k": 8,
+                "filter": meta_filter if meta_filter else {"company": company},
+            }
+        )
+        qa_chain = RetrievalQA.from_chain_type(
+            llm=llm,
+            chain_type="stuff",
+            retriever=retriever,
+            return_source_documents=False,
+            chain_type_kwargs={
+                "prompt": PromptTemplate(
+                    input_variables=["context", "question"],
+                    template=(
+                        f"{audience_prompt}\n\n"
+                        "Use only the provided 10-K filing context to answer.\n"
+                        "Be thorough but focused. Write 2-4 paragraphs.\n"
+                        "Context: {{context}}\n"
+                        "Question: {{question}}\n"
+                        "Answer:"
+                    )
+                )
+            },
+        )
+        result = qa_chain.invoke({"query": query})
+        sections[section_key] = result["result"].strip()
+
+        # --- Build the payload for the JS builder ---
+        audience_label = \
+        {"analyst": "Analyst Edition", "investor": "Investor Summary", "general": "Plain English Guide"}[audience]
+        payload = {
+            "company": company,
+            "ticker": TICKER_MAP.get(company, ""),
+            "audience": audience,
+            "audience_label": audience_label,
+            "generated_at": datetime.utcnow().strftime("%B %d, %Y"),
+            "sections": sections,
+        }
+
+    # Write payload to a temp JSON file
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(payload, f, indent=2)
+        payload_path = f.name
+
+        # Output path
+        out_dir = os.path.join(BASE_DIR, "reports")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"{company}_10K_Report_{audience}.docx")
+
+    # Call the Node.js builder
+    try:
+        result = subprocess.run(
+            ["node", REPORT_BUILDER_SCRIPT, payload_path, out_path],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode != 0:
+            return f"Report builder error: {result.stderr}"
+    except Exception as e:
+        return f"Failed to run report builder: {e}"
+    finally:
+        os.unlink(payload_path)
+
+    return f"REPORT_PATH:{out_path}"
 
 # --------------------------------------------------------------------------
 # --- AGENT GRAPH ---
@@ -506,7 +772,7 @@ def build_chart(company_name: str):
 class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 # Initialize tools
-toolbox = [ask, extract_sankey_structure, list_companies, build_chart]
+toolbox = [ask, extract_sankey_structure, list_companies, build_chart, get_stock_info, get_stock_chart, generate_report]
 tool_node = ToolNode(toolbox)
 # Bind tools to the LLM
 llm_with_tools = llm.bind_tools(toolbox)
